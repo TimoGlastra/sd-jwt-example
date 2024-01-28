@@ -79,21 +79,36 @@ export async function sign() {
 export async function verify(compact: string) {
   const sdJwtVc = SdJwtVc.fromCompact(compact);
 
-  return sdJwtVc.verify(({ message, signature, publicKeyJwk, header }) => {
-    const jwk =
-      publicKeyJwk ?? (header.jwk as Record<string, unknown> | undefined);
+  const verificationResult = await sdJwtVc.verify(
+    ({ message, signature, publicKeyJwk, header }) => {
+      const jwk =
+        publicKeyJwk ?? (header.jwk as Record<string, unknown> | undefined);
 
-    if (!jwk) {
-      throw new Error("Missing public key jwk");
+      if (!jwk) {
+        throw new Error("Missing public key jwk");
+      }
+
+      const publicKey = crypto.createPublicKey({
+        format: "jwk",
+        key: jwk,
+      });
+
+      return crypto.verify(null, Buffer.from(message), publicKey, signature);
     }
+  );
 
-    const publicKey = crypto.createPublicKey({
-      format: "jwk",
-      key: jwk,
-    });
+  if (!sdJwtVc.keyBinding) return verificationResult;
 
-    return crypto.verify(null, Buffer.from(message), publicKey, signature);
-  });
+  // Verify the _sd_hash is set on the payload
+  const compactWithoutKbJwt = compact.split("~").slice(0, -1).join("~") + `~`;
+  const sdHash = crypto
+    .createHash("sha-256")
+    .update(compactWithoutKbJwt)
+    .digest("base64url");
+
+  sdJwtVc.keyBinding.assertClaimInPayload("_sd_hash", sdHash);
+
+  return verificationResult;
 }
 
 export async function prove(
